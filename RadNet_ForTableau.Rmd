@@ -1,0 +1,179 @@
+---
+title: "Tableau Data Prep with RStudio"
+author: "Wendy Bisset"
+date: "November 09, 2018"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    fig_caption: yes
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+=============================================================
+
+```{r packages, echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+```
+
+##Data Source and Wrangling
+
+RStudio was used to re-wrangle data from the US Environmental Protection Agency's **RadNet**[^RadNetOverview] database for ultimate use with Tableau.[^Tableau] RadNet is a system of geographically distributed monitoring stations which sample and test for a number of analytes (e.g., gross beta (β), cesium-137, iodine-131) in the nation's air, precipitation, and drinking water. RadNet provides historical data to estimate long-term trends in environmental radiation levels and as a means to estimate levels of radioactivity in the environment. Stations are located across the US as well as American Territories. The database primarily consists of data collected since 1978 though some data dates back to 1973 from RadNet's precursor, ERAMS (Environmental Radiation Ambient Monitoring System).
+
+[^Tableau]:  https://www.tableau.com/
+[^RadNetOverview]: <https://www.epa.gov/enviro/radnet-overview>
+
+All data was downloaded from the RadNet website as csv files. To minimize large requests the data was downloaded in chunks and the resulting .csv files were loaded into RStudio and then merged[^merged] into a single R dataframe. A version of the raw data can be found on my GitHub.[^RadNet-EDA] The GitHub raw files only have data though September 2017 while this current project has data to October 2018.
+
+[^merged]: https://psychwire.wordpress.com/2011/06/03/merge-all-files-in-a-directory-using-r-into-a-single-dataframe/
+
+```{r Load_Data, echo=FALSE, message=FALSE, warning=FALSE}
+### To avoid re-appended data, dataframes are deleted when rerunning ### this chunk 
+rm(air_data, drinking_water_data, precipitation_data)
+
+### Load/Append .csv files into separate data frames for each media type
+
+dir_list <-  list('air', 'precipitation', 'drinking_water' )
+
+for (directory in dir_list){
+  subdir <- (paste('/Users/wendy/Documents/Udacity/R\ Stuff/RadNet-EDA/radnet_data/', directory, sep=""))
+  files_in_sub <- list.files(subdir)
+  
+  dfname <- paste(directory, '_info', sep="")  
+
+  for (file in files_in_sub){
+    #print(paste(c("****Assessing: ", file)))
+    file_loc <- paste(subdir, '/', file, sep="")
+    # if the  dataset doesn't exist, create it
+    if (!exists("db")){
+        db <- read.csv(file_loc, header=TRUE)
+    }
+    # if the dataset does exist, append to it
+    else if (exists("db")){
+        temp_dataset <-read.csv(file_loc, header=TRUE)
+        db <-rbind(db, temp_dataset)
+       rm(temp_dataset)
+    }
+  }
+  assign(dfname, db)
+  remove(db)
+}
+
+### Cleanup Workspace
+rm(dfname, dir_list, directory, file, file_loc, files_in_sub, subdir)
+
+```
+
+```{r consolidate_data, echo=FALSE, message=FALSE, warning=FALSE}
+### dataframe names were hard coded into `bind_rows()`.
+
+### Consolidate media specific data into ONE dataframe: <rad_data_info>
+rad_data_raw_tableau <- bind_rows(list(air_info, drinking_water_info, 
+                               precipitation_info))
+
+```
+
+
+##Data Overview and Tidying 
+ 
+The raw consolidated dataframe for Tableau has 19 variables and 418523 observations. Variables include monitoring station locations, sample types (material) collected, and analytes. 
+
+Variable names were shortened and several variables were recast as factors with ordered levels where it made sense that an inmposed order may be useful, e.g., S(econd) < M(inute) < H(our) < D(ay) < Y(ear). In the event of possible date manipulations, the date field was changed to type DATE instead of CHR.[^as.Date]
+
+[^as.Date]: <https://www.rdocumentation.org/packages/base/versions/3.4.1/topics/as.Date>.
+
+```{r cleanup, echo=FALSE, message=FALSE, warning=FALSE}
+#### Rename Variables 
+colnames(air_info) <-gsub('.+\\.','',colnames(air_info))
+colnames(precipitation_info) <-gsub('.+\\.','',colnames(precipitation_info))
+colnames(drinking_water_info)<-
+  gsub('.+\\.','',colnames(drinking_water_info))
+colnames(rad_data_raw_tableau) <-gsub('.+\\.','',colnames(rad_data_raw_tableau))
+```
+
+
+```{r cleanup2, echo=FALSE, message=FALSE, warning=FALSE}
+#### level/order variables of limited categories 
+#### impose order, e.g., S(econd) < M(inute) < H(our) < D(ay) < Y(ear).
+
+
+### (2) MAT_ID: material type e.g. Air, SW, DW, PPT, MILK
+rad_data_raw_tableau$MAT_ID      <- factor(rad_data_raw_tableau$MAT_ID) 
+### (5) ANA_UNIT: size of sample G,L,M3, MG, ML
+rad_data_raw_tableau$ANA_UNIT    <- factor(rad_data_raw_tableau$ANA_UNIT)       
+### (15) RESULT_UNIT: Result Units -> ACI/M3, DPM/GC, G/L, PCI/L, PCI/M3
+rad_data_raw_tableau$RESULT_UNIT <- factor(rad_data_raw_tableau$RESULT_UNIT)
+### (17) ANA_TYPE Analyte two types E (Element) and R (Radionuclide)
+rad_data_raw_tableau$ANA_TYPE    <- factor(rad_data_raw_tableau$ANA_TYPE)
+### (19) HALF_LIFE_TIME_UNIT: 5 Units of Half Life: S< M< H< D< Y
+rad_data_raw_tableau$HALF_LIFE_TIME_UNIT <-
+  factor(rad_data_raw_tableau$HALF_LIFE_TIME_UNIT,
+         levels = c("S", "M", "H", "D", "Y"))
+
+rad_data_raw_tableau$RESULT_DATE <- as.Date(rad_data_raw_tableau$RESULT_DATE, "%F")
+
+```
+
+EPA regions are geographically assigned to the Headquarter City for that region. Some city names/locations were updated to fit in with Tableau's recognition list.
+
+```{r epa_regions, echo=FALSE, message=FALSE, warning=FALSE}
+#### 10 EPA Regions changed to corresponding Headquarter City ####
+### R01 New England (CT, ME, MA, NH, RI, VT and 10 tribal nations)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R01")]   <- "BOSTON"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R01")]  <- "MA"
+### R02 NJ,NY, Puerto Rico (PR), US VI and 8 tribal nations)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R02")]   <- "New York City"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R02")]  <- "NY"
+### R03 Mid-Atlantic (DE, DC, MD, PA, VA, WV)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R03")]   <- "PHILADELPHIA"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R03")]  <- "PA"
+### R04 Southeast (AL, FL, GA, KY, MS, NC, SC, TN and 6 tribes)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R04")]   <- "ATLANTA"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R04")]  <- "GA"
+### R05 IL, IN, MI, MN, OH, WI and 35 tribal nations                    
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R05")]   <- "CHICAGO"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R05")]  <- "IL"
+### R06 South Central (AK, LA, NM, OK, TX and 66 tribal nations)      
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R06")]   <- "DALLAS"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R06")]  <- "TX"
+### R07 Midwest (IA, KS, MO, NE and 9 tribal nations)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R07")]   <- "KANSAS CITY"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R07")]  <- "KS"
+### R08 Mountains and Plains (CO, MT, ND, SD, UT, WY and 27 tribal nations)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R08")]  <- "DENVER"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R08")]  <- "CO"
+### R09 Pacific Southwest (AZ, CA, HI, NV, Pacific Islands and 148 tribal nations)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R09")]   <- "SAN FRANCISCO"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R09")]  <- "CA"
+### R10 Pacific Northwest (AK, ID, OR, WA and 271 Native Tribes)
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$STATE_ABBR == "R10")]   <- "SEATTLE"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "R10")]  <- "WA"
+
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "PC")] <- "PANAMA"
+rad_data_raw_tableau$STATE_ABBR[(rad_data_raw_tableau$STATE_ABBR == "SC") &
+                          (rad_data_raw_tableau$CITY_NAME == "DOSWELL")] <- "VA"
+
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "TMI")] <- "THREE MILE ISLAND"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "GENOA CITY")] <- "GENOA CITY, VILLAGE OF"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "ROSS")] <- "ROSS TWP"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "W. CHICAGO")] <- "WEST CHICAGO"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "E. LIVERPOOL")] <- "EAST LIVERPOOL"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "S. ST. PAUL")] <- "SOUTH SAINT PAUL"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "GUAM")] <- "HAGATNA"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "KAUAI")] <- "KAPAA"
+rad_data_raw_tableau$CITY_NAME[(rad_data_raw_tableau$CITY_NAME == "NAVAJO LAKE")] <- "NAVAJO DAM"
+```
+
+```{r save_csv, echo=FALSE, message=FALSE, warning=FALSE}
+
+###  SAVE Dataframe as .csv for import into Tableau
+write.csv(rad_data_raw_tableau, "radnet_data2.csv", row.names = FALSE)
+```
+
+
+A `places.csv` file of locations was generated previously with Google API query using `geocode()`. This service now requires an API key.[^geocode] The original places file can be found within the RadNet Exploratory Data Analysis project folder on my GitHub.[^RadNet-EDA] The locations file was edited manually to correct Cite/State/Country locations for proper recognition by Tableau. 
+
+[^geocode]: https://developers.google.com/maps/documentation/geocoding/start
+[^RadNet-EDA]: https://github.com/MdmeCurie/RadNet-EDA.git

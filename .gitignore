@@ -1,0 +1,10 @@
+.DS_Store
+extras
+tableau-radnet review_wcb.ipynb
+radnet_data2.csv
+RadNet_setup.Rproj
+.ipynb_checkpoints/
+.Rproj.user/
+.Rhistory
+.RData
+extras/
